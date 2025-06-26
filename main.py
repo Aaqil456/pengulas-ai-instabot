@@ -18,6 +18,7 @@ IMGBB_API_KEY = os.getenv("IMGBB_API_KEY")
 
 SESSION_FILE = "telegram_session"
 RESULT_FILE = "results.json"
+TELEGRAM_CHANNELS = ["WatcherGuru", "Cointelegraph", "CryptoNewsChannel"]  # Add more channels
 
 # === Load all previously posted texts from results.json ===
 def load_posted_texts_from_results():
@@ -123,72 +124,72 @@ async def main():
     media_group_ids_done = set()
     results = []
 
-    async for msg in client.iter_messages("WatcherGuru", limit=20):
-        original_text = (msg.text or "").strip()
+    for channel in TELEGRAM_CHANNELS:
+        async for msg in client.iter_messages(channel, limit=20):
+            original_text = (msg.text or "").strip()
 
-        if not original_text or len(original_text.split()) < 3:
-            continue
+            if not original_text or len(original_text.split()) < 3:
+                continue
 
-        if original_text in posted_texts:
-            print(f"[SKIP] Already posted content: {original_text[:60]}...")
-            continue
+            if original_text in posted_texts:
+                print(f"[SKIP] Already posted content: {original_text[:60]}...")
+                continue
 
-        if hasattr(msg, "media_group_id") and msg.media_group_id in media_group_ids_done:
-            continue
+            if hasattr(msg, "media_group_id") and msg.media_group_id in media_group_ids_done:
+                continue
 
-        translated = translate_to_malay(original_text)
-        if translated == "Translation failed":
-            continue
+            translated = translate_to_malay(original_text)
+            if translated == "Translation failed":
+                continue
 
-        image_paths = []
-        video_path = None
-        success = False
-
-        if hasattr(msg, "media_group_id") and msg.media_group_id:
-            group_msgs = []
-            async for grouped in client.iter_messages("WatcherGuru", min_id=msg.id - 15, max_id=msg.id + 15):
-                if (
-                    hasattr(grouped, "media_group_id") and
-                    grouped.media_group_id == msg.media_group_id
-                ):
-                    group_msgs.append(grouped)
-            media_group_ids_done.add(msg.media_group_id)
-
-            for media_msg in reversed(group_msgs):
-                if isinstance(media_msg.media, MessageMediaPhoto):
-                    path = f"temp_{media_msg.id}.jpg"
-                    await client.download_media(media_msg.media, file=path)
-                    image_paths.append(path)
-        elif isinstance(msg.media, MessageMediaPhoto):
-            path = f"temp_{msg.id}.jpg"
-            await client.download_media(msg.media, file=path)
-            image_paths.append(path)
-
-        # === Instagram Posting Only ===
-        if image_paths:
-            ig_url = upload_image_to_imgbb(image_paths[0])
-            if ig_url:
-                container_id = upload_to_ig_container(ig_url, translated)
-                if container_id:
-                    success = publish_ig_container(container_id)
-        else:
-            print("[SKIP] No image found — skipping (Instagram requires media).")
+            image_paths = []
             success = False
 
-        if success:
-            results.append({
-                "telegram_id": msg.id,
-                "original_text": original_text,
-                "translated_caption": translated,
-                "ig_status": "Posted",
-                "date_posted": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            })
+            if hasattr(msg, "media_group_id") and msg.media_group_id:
+                group_msgs = []
+                async for grouped in client.iter_messages(channel, min_id=msg.id - 15, max_id=msg.id + 15):
+                    if (
+                        hasattr(grouped, "media_group_id") and
+                        grouped.media_group_id == msg.media_group_id
+                    ):
+                        group_msgs.append(grouped)
+                media_group_ids_done.add(msg.media_group_id)
 
-        for path in image_paths:
-            if os.path.exists(path):
-                os.remove(path)
+                for media_msg in reversed(group_msgs):
+                    if isinstance(media_msg.media, MessageMediaPhoto):
+                        path = f"temp_{media_msg.id}.jpg"
+                        await client.download_media(media_msg.media, file=path)
+                        image_paths.append(path)
+            elif isinstance(msg.media, MessageMediaPhoto):
+                path = f"temp_{msg.id}.jpg"
+                await client.download_media(msg.media, file=path)
+                image_paths.append(path)
 
-        time.sleep(1)
+            if image_paths:
+                ig_url = upload_image_to_imgbb(image_paths[0])
+                if ig_url:
+                    container_id = upload_to_ig_container(ig_url, translated)
+                    if container_id:
+                        success = publish_ig_container(container_id)
+            else:
+                print(f"[SKIP] No image found in {channel} — skipping (Instagram requires media).")
+                success = False
+
+            if success:
+                results.append({
+                    "telegram_id": msg.id,
+                    "channel": channel,
+                    "original_text": original_text,
+                    "translated_caption": translated,
+                    "ig_status": "Posted",
+                    "date_posted": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                })
+
+            for path in image_paths:
+                if os.path.exists(path):
+                    os.remove(path)
+
+            time.sleep(1)
 
     log_result(results)
     await client.disconnect()
