@@ -12,8 +12,9 @@ from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
 API_ID = int(os.getenv("TELEGRAM_API_ID"))
 API_HASH = os.getenv("TELEGRAM_API_HASH")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-FB_PAGE_ID = os.getenv("FB_PAGE_ID")
-LONG_LIVED_USER_TOKEN = os.getenv("LONG_LIVED_USER_TOKEN")
+IG_USER_ID = os.getenv("IG_USER_ID")
+IG_GRAPH_TOKEN = os.getenv("IG_GRAPH_TOKEN")
+IMGBB_API_KEY = os.getenv("IMGBB_API_KEY")
 
 SESSION_FILE = "telegram_session"
 RESULT_FILE = "results.json"
@@ -67,82 +68,50 @@ Do not use slang or shouting. Keep it natural, chill, and neutral.
         print(f"[Gemini Error] {e}")
         return "Translation failed"
 
-# === Facebook Posting ===
-def get_fb_token():
+# === Instagram Posting ===
+def upload_image_to_imgbb(image_path):
     try:
-        res = requests.get(f"https://graph.facebook.com/v19.0/me/accounts?access_token={LONG_LIVED_USER_TOKEN}")
-        return res.json()["data"][0]["access_token"]
-    except:
+        with open(image_path, 'rb') as f:
+            res = requests.post(
+                "https://api.imgbb.com/1/upload",
+                params={"key": IMGBB_API_KEY},
+                files={"image": f}
+            )
+            return res.json()["data"]["url"]
+    except Exception as e:
+        print(f"[Upload to imgbb Error] {e}")
         return None
 
-def post_text_only_to_fb(caption):
-    token = get_fb_token()
-    if not token:
-        return False
+def upload_to_ig_container(image_url, caption):
     try:
         r = requests.post(
-            f"https://graph.facebook.com/{FB_PAGE_ID}/feed",
-            data={"message": caption, "access_token": token}
-        )
-        print("[FB] Text-only post success." if r.status_code == 200 else f"[FB Text Error] {r.status_code}: {r.text}")
-        return r.status_code == 200
-    except Exception as e:
-        print(f"[FB Text Exception] {e}")
-        return False
-
-def post_photos_to_fb(image_paths, caption):
-    token = get_fb_token()
-    if not token:
-        return False
-
-    media_ids = []
-    for path in image_paths:
-        if not os.path.exists(path):
-            continue
-        try:
-            with open(path, 'rb') as f:
-                r = requests.post(
-                    f"https://graph.facebook.com/{FB_PAGE_ID}/photos",
-                    data={"published": "false", "access_token": token},
-                    files={"source": f}
-                )
-                if r.status_code == 200:
-                    media_ids.append({"media_fbid": r.json()["id"]})
-        except Exception as e:
-            print(f"[FB Upload Image Error] {e}")
-
-    if not media_ids:
-        return False
-
-    try:
-        r = requests.post(
-            f"https://graph.facebook.com/{FB_PAGE_ID}/feed",
+            f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media",
             data={
-                "message": caption,
-                "attached_media": json.dumps(media_ids),
-                "access_token": token
+                "image_url": image_url,
+                "caption": caption,
+                "access_token": IG_GRAPH_TOKEN
             }
         )
-        return r.status_code == 200
+        r.raise_for_status()
+        return r.json().get("id")
     except Exception as e:
-        print(f"[FB Image Post Error] {e}")
-        return False
+        print(f"[IG Container Error] {e}")
+        return None
 
-def post_video_to_fb(video_path, caption):
-    token = get_fb_token()
-    if not token:
-        return False
+def publish_ig_container(container_id):
     try:
-        with open(video_path, 'rb') as f:
-            r = requests.post(
-                f"https://graph.facebook.com/{FB_PAGE_ID}/videos",
-                data={"description": caption, "access_token": token},
-                files={"source": f}
-            )
-        print("[FB] Video post success." if r.status_code == 200 else f"[FB Video Error] {r.status_code}: {r.text}")
-        return r.status_code == 200
+        r = requests.post(
+            f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media_publish",
+            data={
+                "creation_id": container_id,
+                "access_token": IG_GRAPH_TOKEN
+            }
+        )
+        r.raise_for_status()
+        print("[IG] Post success.")
+        return True
     except Exception as e:
-        print(f"[FB Video Exception] {e}")
+        print(f"[IG Publish Error] {e}")
         return False
 
 # === MAIN ===
@@ -194,27 +163,28 @@ async def main():
             path = f"temp_{msg.id}.jpg"
             await client.download_media(msg.media, file=path)
             image_paths.append(path)
-        elif isinstance(msg.media, MessageMediaDocument) and msg.file.mime_type and "video" in msg.file.mime_type:
-            video_path = f"temp_{msg.id}.mp4"
-            await client.download_media(msg.media, file=video_path)
 
-        if video_path:
-            success = post_video_to_fb(video_path, translated)
-        elif image_paths:
-            success = post_photos_to_fb(image_paths, translated)
+        # === Instagram Posting Only ===
+        if image_paths:
+            ig_url = upload_image_to_imgbb(image_paths[0])
+            if ig_url:
+                container_id = upload_to_ig_container(ig_url, translated)
+                if container_id:
+                    success = publish_ig_container(container_id)
         else:
-            success = post_text_only_to_fb(translated)
+            print("[SKIP] No image found — skipping (Instagram requires media).")
+            success = False
 
         if success:
             results.append({
                 "telegram_id": msg.id,
                 "original_text": original_text,
                 "translated_caption": translated,
-                "fb_status": "Posted",
+                "ig_status": "Posted",
                 "date_posted": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             })
 
-        for path in image_paths + ([video_path] if video_path else []):
+        for path in image_paths:
             if os.path.exists(path):
                 os.remove(path)
 
