@@ -18,7 +18,7 @@ IMGBB_API_KEY = os.getenv("IMGBB_API_KEY")
 
 SESSION_FILE = "telegram_session"
 RESULT_FILE = "results.json"
-TELEGRAM_CHANNELS = ["WatcherGuru", "Cointelegraph", "CryptoNewsChannel"]  # Add more channels
+TELEGRAM_CHANNELS = ["AItoolboxdaily"]  # Add more channels https://t.me/
 
 # === Load all previously posted texts from results.json ===
 def load_posted_texts_from_results():
